@@ -1,0 +1,30 @@
+.DS_Store
+Thumbs.db
+
+# Node / Electron
+node_modules/
+app/dist/
+app/out/
+
+# Python
+backend/venv/
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Whisper model cache (large, re-downloadable)
+backend/models/
+
+# This PC's own operator data (favorites/history/theme/uploaded images) -
+# a fresh clone/install should start clean, not inherit it
+backend/data/
+
+# Logs
+*.log
+
+# Distribution artifacts (built by package.ps1 - not source)
+WordScroll-*.zip
+
+# Claude Code local session state
+.claude/

@@ -1,0 +1,986 @@
+/* Dark is the default/original palette (no [data-theme] attribute — matches
+   pre-toggle behavior for anyone with a saved preference from before this
+   existed). ui-theme.js sets [data-theme="light"] or "dark" on <html> once
+   the operator picks explicitly; see the light override block below. */
+:root,
+:root[data-theme="dark"] {
+  --bg: #111318;
+  --panel: #1a1d24;
+  --border: #2a2e38;
+  --text: #e8eaf0;
+  --text-dim: #8a8f9c;
+  --accent: #4f8cff;
+  --ok: #3ecf6e;
+  --warn: #e0a83e;
+  --off: #6a707c;
+  --surface-1: #22262f;
+  --surface-2: #171a20;
+  --error-bg: rgba(224, 84, 62, 0.15);
+  --error-border: #e0543e;
+  --error-text: #ff9686;
+}
+
+:root[data-theme="light"] {
+  --bg: #f3f4f7;
+  --panel: #ffffff;
+  --border: #d8dce3;
+  --text: #1c1f26;
+  --text-dim: #5b6270;
+  --accent: #2f6fed;
+  --ok: #1f9c52;
+  --warn: #9a6400;
+  --off: #767c89;
+  --surface-1: #eceef2;
+  --surface-2: #e7e9ee;
+  --error-bg: rgba(196, 47, 32, 0.1);
+  --error-border: #c42f20;
+  --error-text: #a3271b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.header-btn {
+  flex-shrink: 0;
+}
+
+/* Single consolidated row: audio device + start/stop + mic level, both
+   search fields, the theme button, and connection status — replaces the
+   old separate WordScroll/Theme header row and search-bar row, freeing up
+   vertical space for the panels below. */
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+select, button {
+  background: var(--surface-1);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+button:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.device-select {
+  flex: 0 1 180px;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.icon-btn {
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+  padding: 7px 10px;
+}
+
+.mic-meter {
+  position: relative;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+}
+
+.mic-icon {
+  position: absolute;
+  inset: 0;
+  font-size: 20px;
+  line-height: 26px;
+  text-align: center;
+}
+
+.mic-icon-bg {
+  opacity: 0.35;
+}
+
+.mic-icon-fill {
+  color: var(--ok);
+  filter: drop-shadow(0 0 3px rgba(62, 207, 110, 0.6));
+  clip-path: inset(100% 0 0 0);
+  transition: clip-path 60ms linear;
+}
+
+.status {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.status-offline {
+  background: rgba(106, 112, 124, 0.2);
+  color: var(--off);
+}
+
+.status-online {
+  background: rgba(62, 207, 110, 0.15);
+  color: var(--ok);
+}
+
+.search-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 100px;
+  min-width: 70px;
+}
+
+.search-field label {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.search-field label kbd {
+  font-family: inherit;
+  font-size: 10px;
+  padding: 1px 5px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+}
+
+.search-field input {
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.search-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.35);
+}
+
+.search-status {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-left: auto;
+  align-self: center;
+}
+
+.search-results-panel {
+  flex: 0 0 18%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.search-results-panel h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 0 0 10px;
+}
+
+.search-results-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.search-result {
+  padding: 10px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.search-result:hover {
+  border-color: var(--accent);
+}
+
+.search-result .sr-ref {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.search-result .sr-text {
+  color: var(--text-dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.search-no-results {
+  color: var(--text-dim);
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.error-banner {
+  margin: 0 20px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: var(--error-bg);
+  border: 1px solid var(--error-border);
+  color: var(--error-text);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  padding: 20px;
+  gap: 20px;
+  overflow: hidden;
+}
+
+.transcript-column {
+  flex: 0 0 18%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.reference-column {
+  flex: 1 1 65%;
+  min-width: 620px;
+  display: flex;
+  flex-direction: row;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.reference-subcolumn {
+  flex: 0.9;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Now Displaying + Chapter Navigator get the width freed up from shrinking
+   the transcript/search-results/search-field columns and the other two
+   reference subcolumns, on top of their own equal share — this is the
+   card the operator actually watches as a production monitor, so it gets
+   the most room. */
+.reference-subcolumn:first-child {
+  flex: 2.4;
+}
+
+.reference-column h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin: 0;
+}
+
+.reference-column h2 .hint {
+  text-transform: none;
+  font-weight: 400;
+  letter-spacing: normal;
+  opacity: 0.7;
+}
+
+/* Card container used for every panel in the reference/queue columns, so
+   each section reads as a distinct grouped block instead of a flat list of
+   headings — visual hierarchy the flat layout was missing. */
+.panel-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.panel-card:last-child {
+  margin-bottom: 0;
+}
+
+.reference-subcolumn > .panel-card {
+  flex: 1;
+}
+
+.panel-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  opacity: 0.7;
+  margin-bottom: 8px;
+}
+
+.now-displaying {
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+}
+
+.now-displaying-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.live-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(62, 207, 110, 0.5);
+  }
+  50% {
+    opacity: 0.6;
+    box-shadow: 0 0 0 5px rgba(62, 207, 110, 0);
+  }
+}
+
+.now-displaying-preview {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #000;
+}
+
+.now-displaying-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+}
+
+.icon-btn-transparent {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 15px;
+  padding: 4px 7px;
+  opacity: 0.85;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.icon-btn-transparent:not(:disabled):hover {
+  opacity: 1;
+  border-color: transparent;
+}
+
+.icon-btn-transparent:disabled {
+  opacity: 0.3;
+}
+
+.overlay-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.overlay-hint code {
+  color: var(--accent);
+}
+
+.chapter-nav-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chapter-nav-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.chapter-nav-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.chapter-nav-row:hover {
+  background: var(--panel);
+}
+
+.chapter-nav-row.current {
+  background: rgba(79, 140, 255, 0.18);
+  border-left: 3px solid var(--accent);
+  padding-left: 7px;
+}
+
+.chapter-nav-row .cn-verse {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 600;
+  min-width: 1.6em;
+  text-align: right;
+}
+
+.chapter-nav-row .cn-text {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-nav-row.current .cn-text {
+  color: var(--text);
+}
+
+.reference-card {
+  cursor: pointer;
+}
+
+.reference-card:hover {
+  border-color: var(--accent);
+}
+
+.reference-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reference-card {
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: 6px;
+}
+
+.reference-card-live {
+  border-left-color: var(--warn);
+  border-style: dashed;
+  opacity: 0.85;
+}
+
+.reference-card-low-confidence {
+  border-left-color: var(--warn);
+}
+
+.reference-card-low-confidence .ref-raw {
+  color: var(--warn);
+}
+
+.pending-card {
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warn);
+  border-radius: 6px;
+}
+
+.pending-card-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pending-card-actions button {
+  flex: 1;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.pending-card-actions .approve-btn:hover {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.pending-card-actions .dismiss-btn:hover {
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+
+.reference-card .ref-title,
+.pending-card .ref-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.reference-card .ref-preview,
+.pending-card .ref-preview {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.reference-card .ref-raw,
+.pending-card .ref-raw {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transcript-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.transcript-log .line {
+  padding: 6px 10px;
+  background: var(--panel);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+}
+
+.partial-line {
+  min-height: 40px;
+  padding: 10px 14px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-style: italic;
+  font-size: 14px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Phase 2: History / Favorites / Queue panels ---------------------------- */
+
+.side-panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-bottom: 4px;
+}
+
+.side-panel-header button {
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.side-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.side-list-empty {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.side-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.side-row:hover {
+  border-color: var(--accent);
+}
+
+.side-row-ref {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-row-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.side-row-remove,
+.side-row-move {
+  padding: 2px 6px;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* Theme settings modal --------------------------------------------------- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-backdrop[hidden] {
+  display: none;
+}
+
+.modal-panel {
+  width: min(1080px, 94vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.modal-close-btn {
+  font-size: 16px;
+  padding: 2px 10px;
+}
+
+.modal-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+}
+
+/* Preview stays fixed at the top (never scrolls out of view); only the
+   settings cards below it scroll. */
+.theme-preview-row {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: 18px 18px 0;
+}
+
+/* Left card / right card / full-width bottom card below the preview —
+   each visually bordered as its own section. */
+.theme-modal-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "left    right"
+    "bottom  bottom";
+  gap: 16px;
+  padding: 18px;
+}
+
+.theme-card-left {
+  grid-area: left;
+}
+
+.theme-card-right {
+  grid-area: right;
+}
+
+.theme-card-bottom {
+  grid-area: bottom;
+}
+
+.theme-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background: var(--panel);
+}
+
+.theme-card h3 {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.theme-card-bottom-columns {
+  display: flex;
+  gap: 20px;
+}
+
+.theme-card-bottom-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.theme-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.theme-form-row label {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-form-row select,
+.theme-form-row input[type="range"],
+.theme-form-row input[type="text"] {
+  width: 100%;
+}
+
+.theme-form-row input[type="color"] {
+  width: 60px;
+  height: 30px;
+  padding: 2px;
+}
+
+.theme-radio-group {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.theme-radio-group label {
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.theme-bg-image-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.theme-bg-image-controls input[type="file"] {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.theme-bg-image-thumb {
+  margin-top: 8px;
+  width: 100%;
+  max-height: 100px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.theme-templates-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.template-card {
+  width: 150px;
+  padding: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+
+/* Real 1920x1080 overlay render, scaled down by mountScaledPreview() — a
+   true miniature of what the template actually looks like (background
+   image/color, font, layout), not a flat color swatch. */
+.template-thumb {
+  width: 100%;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: #000;
+}
+
+.template-thumb-frame {
+  pointer-events: none; /* it's a preview, not an interactive overlay */
+}
+
+.template-card-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-card-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.template-card-actions button {
+  flex: 1;
+  font-size: 11px;
+  padding: 3px 0;
+}
+
+.theme-save-template-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-save-template-row input {
+  flex: 1;
+}
+
+#theme-apply-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.theme-preview-frame {
+  position: relative;
+  width: min(640px, 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #000;
+  /* height and the iframe's transform are set by mountScaledPreview() in
+     renderer.js — it renders the iframe at the real 1920x1080 canvas size
+     and scales the whole thing down, so proportions always match the real
+     NDI/overlay output exactly instead of looking different at a smaller
+     preview size. */
+}
+
+.ui-theme-toggle-btn {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 50;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.ui-theme-toggle-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}

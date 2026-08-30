@@ -1,0 +1,234 @@
+/*
+ * Structure only — actual theming (font, colors, sizing, position, layout,
+ * margins, background, shadow) comes from theme_store.py on the backend,
+ * applied live by overlay.js as CSS custom properties + state classes on
+ * #root. See app/src/renderer/theme.js for the operator-facing settings UI.
+ */
+/* No external font import — NFR-2 requires the core display loop to work
+   fully offline, so this relies on system fonts only. */
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent; /* critical for NDI alpha / OBS-vMix chroma-free overlay */
+  overflow: hidden;
+}
+
+/* Full-bleed background layer, used only by layouts with fullBleed:true
+   (e.g. "Full Frame") — spans (almost) the whole canvas regardless of text
+   length, unlike #root's own bg-box/bg-image which hugs the text tightly
+   (used by "Lower Third"). Kept as a separate element so #root can stay
+   content-sized (needed for its own text centering) while still showing a
+   full-bleed background behind it. */
+#bg-layer {
+  position: absolute;
+  inset: 0;
+  display: none;
+  border-radius: 16px;
+}
+
+#bg-layer.active {
+  display: block;
+}
+
+#bg-layer.fullbleed {
+  inset: var(--frame-margin, 5%);
+}
+
+#bg-layer.style-box {
+  background: var(--bg-color, transparent);
+}
+
+#bg-layer.style-image {
+  background-image: var(--bg-image-url, none);
+  background-size: cover;
+  background-position: center;
+}
+
+#bg-layer.style-image::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--scrim-rgba, transparent);
+  border-radius: inherit;
+}
+
+/* Intrinsically sized (width: max-content) and horizontally centered via
+   left:50%/translateX — NOT left:0/right:0 — so the box (when bg-box/
+   bg-image is on) hugs the text like a card, matching how
+   display_renderer.py sizes the NDI box around the widest line. A
+   left:0/right:0 #root would stretch the background across the entire
+   frame width regardless of text length, always reading as a full-width
+   banner no matter how large "Full Frame" makes the text. */
+#root {
+  position: absolute;
+  left: 50%;
+  width: max-content;
+  max-width: 84%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  /* No opacity transition here on purpose (there was one) — it could get
+     stuck part-way through and leave opacity permanently at 0, hiding a
+     verse that's actually active (confirmed directly: forcing
+     transition:none immediately snapped a stuck element to its correct
+     opacity:1). For a live-service display, "isn't showing" is a far
+     worse failure than losing a 0.35s fade, so show/hide is instant now —
+     reliability over polish here. */
+}
+
+#root.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#root.pos-bottom {
+  bottom: var(--frame-margin, 8%);
+  top: auto;
+  transform: translateX(-50%);
+}
+
+#root.pos-top {
+  top: var(--frame-margin, 8%);
+  bottom: auto;
+  transform: translateX(-50%);
+}
+
+#root.pos-center {
+  top: 50%;
+  bottom: auto;
+  transform: translateX(-50%) translateY(-50%);
+}
+
+#root.align-center {
+  align-items: center;
+  text-align: center;
+}
+
+#root.align-left {
+  align-items: flex-start;
+  text-align: left;
+}
+
+/* Applied to #root unconditionally (not gated to bg-box/bg-image) — Verse
+   margin X/Y is the text block's own spacing, and needs to have a visible
+   effect (including the guide outline in the Theme preview) regardless of
+   background style or layout. Full Frame's own background lives on the
+   separate #bg-layer (see below), sized by the layout's fixed frame margin
+   instead, so this padding never grows a visible box there — but it does
+   still control the gap between the text and #root's own edge, which is
+   what the preview's dashed guides show. */
+#root {
+  padding-left: var(--box-pad-x, 40px);
+  padding-right: var(--box-pad-x, 40px);
+  padding-top: var(--box-pad-y, 24px);
+  padding-bottom: var(--box-pad-y, 24px);
+  border-radius: 16px;
+}
+
+#root.bg-box {
+  background: var(--bg-color, transparent);
+}
+
+#root.bg-image {
+  position: relative;
+  background-image: var(--bg-image-url, none);
+  background-size: cover;
+  background-position: center;
+}
+
+#root.bg-image::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--scrim-rgba, transparent);
+  border-radius: inherit;
+  z-index: 0;
+}
+
+#root.bg-image .verse-text,
+#root.bg-image .verse-ref {
+  position: relative;
+  z-index: 1;
+}
+
+/* Margin guides — only shown in the Theme modal's preview (?preview=1),
+   never the real production output. The dashed outline on #root itself
+   sits at the outer edge of the box padding (verseMargin); the dashed
+   outlines on the text elements sit at their actual rendered edges — the
+   gap between the two visually IS the margin. */
+#root.show-guides {
+  outline: 2px dashed rgba(79, 140, 255, 0.85);
+  outline-offset: 0;
+}
+
+#root.show-guides .verse-text,
+#root.show-guides .verse-ref {
+  outline: 1px dashed rgba(255, 209, 102, 0.7);
+}
+
+#root.ref-above .verse-text {
+  order: 2;
+}
+
+#root.ref-above .verse-ref {
+  order: 1;
+  margin-top: 0;
+  margin-bottom: var(--reference-margin, 18px);
+}
+
+.verse-text {
+  order: 1;
+  color: var(--verse-color, #ffffff);
+  font-family: var(--font-family, 'Segoe UI', system-ui, sans-serif);
+  font-weight: var(--font-weight, 700);
+  font-size: var(--verse-size, 54px);
+  line-height: 1.35;
+  max-width: var(--fit-max-width, 78vw);
+}
+
+.verse-ref {
+  order: 2;
+  margin-top: var(--reference-margin, 18px);
+  color: var(--ref-color, #ffd166);
+  font-family: var(--font-family, 'Segoe UI', system-ui, sans-serif);
+  font-weight: var(--font-weight, 700);
+  font-size: var(--ref-size, 30px);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#root.shadow-normal .verse-text {
+  text-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.85),
+    0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+#root.shadow-normal .verse-ref {
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.85);
+}
+
+#root.shadow-strong .verse-text {
+  text-shadow:
+    0 3px 12px rgba(0, 0, 0, 0.95),
+    0 0 4px rgba(0, 0, 0, 1),
+    0 0 8px rgba(0, 0, 0, 0.8);
+}
+
+#root.shadow-strong .verse-ref {
+  text-shadow:
+    0 3px 10px rgba(0, 0, 0, 0.95),
+    0 0 3px rgba(0, 0, 0, 1);
+}
+
+#root.shadow-none .verse-text,
+#root.shadow-none .verse-ref {
+  text-shadow: none;
+}

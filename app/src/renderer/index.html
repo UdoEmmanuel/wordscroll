@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>WordScroll</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <section class="controls">
+    <select id="device-select" class="device-select" title="Audio input"></select>
+    <button id="rescan-btn" class="icon-btn" title="Rescan audio devices" aria-label="Rescan audio devices">&#8635;</button>
+    <button id="start-btn" class="icon-btn" title="Start">&#9654;</button>
+    <button id="stop-btn" class="icon-btn" disabled title="Stop">&#9632;</button>
+    <div class="mic-meter" id="mic-meter" aria-label="Microphone input level" title="Microphone input level">
+      <span class="mic-icon mic-icon-bg">&#127908;</span>
+      <span class="mic-icon mic-icon-fill" id="mic-icon-fill">&#127908;</span>
+    </div>
+    <div class="search-field">
+      <label for="search-input-reference">Reference <kbd>F5</kbd></label>
+      <input
+        id="search-input-reference"
+        type="text"
+        placeholder="e.g. John 3:16"
+        title="Press Enter to search, Enter again to push the top result live"
+        aria-label="Reference search — works whether or not audio capture is running. Press Enter to search, Enter again to push the top result live."
+      />
+    </div>
+    <div class="search-field">
+      <label for="search-input-keyword">Keyword <kbd>F6</kbd></label>
+      <input
+        id="search-input-keyword"
+        type="text"
+        placeholder="e.g. shepherd"
+        aria-label="Keyword search — works whether or not audio capture is running"
+      />
+    </div>
+    <span id="search-status" class="search-status" hidden></span>
+    <button id="theme-open-btn" class="header-btn">&#127912; Theme</button>
+    <span id="conn-status" class="status status-offline">Offline</span>
+  </section>
+
+  <div id="error-banner" class="error-banner" hidden></div>
+
+  <main>
+    <section id="search-results" class="panel-card search-results-panel" aria-label="Search results">
+      <div class="side-panel-header"></div>
+      <div id="search-results-list" class="search-results-list"></div>
+    </section>
+    <div class="panel-card transcript-column">
+      <div class="side-panel-header"></div>
+      <section id="final-log" class="transcript-log" aria-label="Finalized transcript"></section>
+      <section id="partial-line" class="partial-line" aria-label="Live partial transcript"></section>
+    </div>
+    <aside class="reference-column">
+      <div class="reference-subcolumn">
+        <div class="now-displaying" id="now-displaying">
+          <div class="now-displaying-header">
+            <div class="live-indicator"><span class="live-dot"></span>LIVE</div>
+          </div>
+          <div class="now-displaying-preview" id="now-displaying-preview">
+            <iframe id="now-displaying-frame" src="http://127.0.0.1:8765/overlay/" title="Live output"></iframe>
+            <div class="now-displaying-actions">
+              <button id="favorite-current-btn" class="icon-btn-transparent" disabled title="Favorite (F)" aria-label="Favorite">&#9734;</button>
+              <button id="queue-current-btn" class="icon-btn-transparent" disabled title="Add to queue (Q)" aria-label="Add to queue">+</button>
+              <button id="clear-btn" class="icon-btn-transparent" disabled title="Clear (C)" aria-label="Clear">&#10005;</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel-card chapter-nav-panel">
+          <div class="side-panel-header">
+            <h2>Chapter Navigator</h2>
+          </div>
+          <div class="panel-hint">Click any verse to jump</div>
+          <div id="chapter-nav-list" class="chapter-nav-list">
+            <div class="chapter-nav-empty">Display a verse to browse its chapter</div>
+          </div>
+        </div>
+      </div>
+      <div class="reference-subcolumn">
+        <div class="panel-card">
+          <div class="side-panel-header">
+            <h2>Detected References</h2>
+          </div>
+          <div class="panel-hint">Auto-displayed</div>
+          <section id="reference-log" class="reference-log" aria-label="Detected scripture references"></section>
+        </div>
+        <div class="panel-card">
+          <div class="side-panel-header">
+            <h2>Pending Suggestions</h2>
+          </div>
+          <div class="panel-hint">Low confidence — review</div>
+          <section id="pending-log" class="reference-log" aria-label="Pending low-confidence suggestions"></section>
+        </div>
+      </div>
+      <div class="reference-subcolumn">
+        <div class="panel-card queue-panel">
+          <div class="side-panel-header">
+            <h2>Queue</h2>
+            <button id="queue-advance-btn" title="Advance queue (N)" disabled>Advance &rarr;</button>
+          </div>
+          <div class="panel-hint">Planned reading order</div>
+          <div id="queue-list" class="side-list">
+            <div class="side-list-empty">Queue is empty</div>
+          </div>
+        </div>
+        <div class="panel-card favorites-panel">
+          <div class="side-panel-header">
+            <h2>Favorites</h2>
+          </div>
+          <div id="favorites-list" class="side-list">
+            <div class="side-list-empty">No favorites yet</div>
+          </div>
+        </div>
+        <div class="panel-card history-panel">
+          <div class="side-panel-header">
+            <h2>History</h2>
+            <button id="history-clear-btn">Clear</button>
+          </div>
+          <div class="panel-hint">This session</div>
+          <div id="history-list" class="side-list">
+            <div class="side-list-empty">Nothing displayed yet</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <div id="theme-modal" class="modal-backdrop" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2>Display Theme</h2>
+        <button id="theme-close-btn" class="modal-close-btn" title="Close (Esc)">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="theme-preview-row">
+          <div class="theme-preview-frame" id="theme-preview-frame">
+            <iframe id="theme-preview" src="http://127.0.0.1:8765/overlay/?preview=1" title="Live overlay preview"></iframe>
+          </div>
+        </div>
+        <div class="theme-modal-grid">
+        <div class="theme-card theme-card-left">
+          <h3>Text</h3>
+          <div class="theme-form-row">
+            <label for="theme-font">Font</label>
+            <select id="theme-font"></select>
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-verse-color">Verse color</label>
+            <input id="theme-verse-color" type="color" />
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-ref-color">Reference color</label>
+            <input id="theme-ref-color" type="color" />
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-verse-size">Max verse size <span id="theme-verse-size-readout"></span></label>
+            <input id="theme-verse-size" type="range" min="16" max="160" />
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-ref-size">Reference size <span id="theme-ref-size-readout"></span></label>
+            <input id="theme-ref-size" type="range" min="10" max="80" />
+          </div>
+          <div class="theme-form-row">
+            <label>Alignment</label>
+            <div class="theme-radio-group">
+              <label><input type="radio" name="theme-align" value="center" /> Center</label>
+              <label><input type="radio" name="theme-align" value="left" /> Left</label>
+            </div>
+          </div>
+          <div class="theme-form-row">
+            <label>Reference position</label>
+            <div class="theme-radio-group">
+              <label><input type="radio" name="theme-ref-placement" value="above" /> Above verse</label>
+              <label><input type="radio" name="theme-ref-placement" value="below" /> Below verse</label>
+            </div>
+          </div>
+        </div>
+
+        <div class="theme-card theme-card-right">
+          <h3>Layout &amp; Spacing</h3>
+          <div class="theme-form-row">
+            <label>Layout</label>
+            <div class="theme-radio-group">
+              <label><input type="radio" name="theme-layout" value="lower-third" /> Lower Third</label>
+              <label><input type="radio" name="theme-layout" value="full-frame" /> Full Frame</label>
+            </div>
+          </div>
+          <div class="theme-form-row">
+            <label>Text position</label>
+            <div class="theme-radio-group">
+              <label><input type="radio" name="theme-position" value="top" /> Top</label>
+              <label><input type="radio" name="theme-position" value="center" /> Center</label>
+              <label><input type="radio" name="theme-position" value="bottom" /> Bottom</label>
+            </div>
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-verse-margin-x">Verse margin (horizontal) <span id="theme-verse-margin-x-readout"></span></label>
+            <input id="theme-verse-margin-x" type="range" min="0" max="160" />
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-verse-margin-y">Verse margin (vertical) <span id="theme-verse-margin-y-readout"></span></label>
+            <input id="theme-verse-margin-y" type="range" min="0" max="160" />
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-ref-margin">Reference margin <span id="theme-ref-margin-readout"></span></label>
+            <input id="theme-ref-margin" type="range" min="0" max="160" />
+          </div>
+          <div class="theme-form-row">
+            <label for="theme-shadow">Shadow</label>
+            <select id="theme-shadow">
+              <option value="none">None</option>
+              <option value="normal">Normal</option>
+              <option value="strong">Strong</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="theme-card theme-card-bottom">
+          <div class="theme-card-bottom-columns">
+            <div class="theme-card-bottom-col">
+              <h3>Background</h3>
+              <div class="theme-form-row">
+                <div class="theme-radio-group">
+                  <label><input type="radio" name="theme-bg-style" value="none" /> None</label>
+                  <label><input type="radio" name="theme-bg-style" value="box" /> Box</label>
+                  <label><input type="radio" name="theme-bg-style" value="image" /> Image</label>
+                </div>
+              </div>
+              <div class="theme-form-row" id="theme-bg-color-row" hidden>
+                <label for="theme-bg-color">Box color</label>
+                <input id="theme-bg-color" type="color" />
+              </div>
+              <div class="theme-form-row" id="theme-bg-opacity-row" hidden>
+                <label for="theme-bg-opacity">Opacity / scrim <span id="theme-bg-opacity-readout"></span></label>
+                <input id="theme-bg-opacity" type="range" min="0" max="100" />
+              </div>
+              <div class="theme-form-row" id="theme-bg-image-row" hidden>
+                <label for="theme-bg-image-input">Background image</label>
+                <div class="theme-bg-image-controls">
+                  <input id="theme-bg-image-input" type="file" accept="image/*" />
+                  <button id="theme-bg-image-remove-btn" type="button">Remove</button>
+                </div>
+                <img id="theme-bg-image-thumb" class="theme-bg-image-thumb" hidden alt="Background image preview" />
+              </div>
+            </div>
+            <div class="theme-card-bottom-col">
+              <h3>Templates</h3>
+              <div id="theme-templates-gallery" class="theme-templates-gallery">
+                <div class="side-list-empty">No saved templates yet</div>
+              </div>
+              <div class="theme-form-row theme-save-template-row">
+                <input id="theme-template-name" type="text" placeholder="Template name" />
+                <button id="theme-save-template-btn" type="button">Save as Template</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="theme-reset-btn">Reset to Defaults</button>
+        <button id="theme-apply-btn">Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <button id="ui-theme-toggle-btn" class="ui-theme-toggle-btn" title="Switch to light theme" aria-label="Switch to light theme">
+    <span id="ui-theme-toggle-icon" aria-hidden="true">&#9789;</span>
+  </button>
+
+  <script src="renderer.js"></script>
+  <script src="panels.js"></script>
+  <script src="hotkeys.js"></script>
+  <script src="theme.js"></script>
+  <script src="menu-actions.js"></script>
+  <script src="ui-theme.js"></script>
+</body>
+</html>
