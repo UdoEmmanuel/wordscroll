@@ -1,6 +1,7 @@
-const { app, BrowserWindow, Menu, dialog, session, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, session, shell } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const packageJson = require("../package.json");
@@ -16,6 +17,8 @@ const BACKEND_PORT = 8765;
 // been generated yet (see README's "Icon" note / install.ps1).
 const _iconCandidate = path.join(__dirname, "..", "..", "wordscroll.ico");
 const WORDSCROLL_ICON = fs.existsSync(_iconCandidate) ? _iconCandidate : undefined;
+
+const GITHUB_REPO = "UdoEmmanuel/wordscroll";
 
 let mainWindow = null;
 let backendProcess = null;
@@ -106,6 +109,61 @@ function stopBackend() {
     backendProcess = null;
   }
 }
+
+// Compares two "vX.Y.Z" (or "X.Y.Z") tags numerically, part by part —
+// simple on purpose, no semver package needed for the plain-integer
+// version scheme this project actually uses.
+function isNewerVersion(latest, current) {
+  const clean = (v) => v.replace(/^v/i, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const a = clean(latest);
+  const b = clean(current);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const diff = (a[i] || 0) - (b[i] || 0);
+    if (diff !== 0) return diff > 0;
+  }
+  return false;
+}
+
+// Check-and-notify only — deliberately not a silent self-updater. A silent
+// updater that downloads and replaces its own running files is exactly the
+// pattern that got the compiled-.exe approach blocked by Windows
+// Application Control in the first place (see README's Packaging section);
+// this just tells the operator a newer version exists and hands them the
+// release page, same trust model as everything else in this app.
+function checkForUpdates() {
+  const req = https.get(
+    {
+      hostname: "api.github.com",
+      path: `/repos/${GITHUB_REPO}/releases/latest`,
+      headers: { "User-Agent": "wordscroll-app" },
+      timeout: 5000,
+    },
+    (res) => {
+      let body = "";
+      res.on("data", (chunk) => (body += chunk));
+      res.on("end", () => {
+        if (res.statusCode !== 200) return; // no releases yet, rate-limited, offline, etc. — silently skip, never nag on failure
+        try {
+          const release = JSON.parse(body);
+          if (isNewerVersion(release.tag_name, packageJson.version) && mainWindow) {
+            mainWindow.webContents.send("update-available", {
+              version: release.tag_name,
+              url: release.html_url,
+            });
+          }
+        } catch {
+          // malformed response — skip silently, same as any other failure here
+        }
+      });
+    }
+  );
+  req.on("error", () => {}); // offline/DNS failure — this must never interrupt a live service, so fail silently
+  req.on("timeout", () => req.destroy());
+}
+
+ipcMain.on("open-update-page", (_event, url) => {
+  if (url && url.startsWith("https://github.com/")) shell.openExternal(url);
+});
 
 function send(action) {
   if (mainWindow) mainWindow.webContents.send("menu-action", action);
@@ -311,6 +369,12 @@ function createWindow() {
     win.maximize(); // fills the screen but keeps window chrome (title bar, taskbar) — not exclusive fullscreen
     win.show();
   });
+
+  // Waits for the renderer's own JS (which registers the "update-available"
+  // listener) to have actually run before checking — checking any earlier
+  // risks the IPC message arriving before anything is listening for it and
+  // getting silently dropped.
+  win.webContents.once("did-finish-load", checkForUpdates);
 
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
 }

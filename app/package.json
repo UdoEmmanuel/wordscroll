@@ -1,7 +1,7 @@
 {
-  "name": "ai-bible-transcriber",
-  "version": "0.1.0",
-  "description": "AI Bible Transcriber — real-time scripture detection & display for live church production",
+  "name": "wordscroll",
+  "version": "0.2.0",
+  "description": "WordScroll — real-time scripture detection & display for live church production",
   "main": "src/main.js",
   "private": true,
   "scripts": {

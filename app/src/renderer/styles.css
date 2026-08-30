@@ -261,6 +261,30 @@ button:not(:disabled):hover {
   font-size: 13px;
 }
 
+.update-banner {
+  margin: 0 20px;
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 6px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.update-banner button {
+  flex-shrink: 0;
+}
+
+.update-dismiss-btn {
+  margin-left: auto;
+  padding: 4px 8px;
+  line-height: 1;
+}
+
 main {
   flex: 1;
   display: flex;

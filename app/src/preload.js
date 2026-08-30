@@ -9,3 +9,14 @@ contextBridge.exposeInMainWorld("menuAPI", {
     ipcRenderer.on("menu-action", (_event, action) => callback(action));
   },
 });
+
+// Check-and-notify update banner (see main.js's checkForUpdates()) — the
+// renderer only ever learns "a newer version exists" and asks main.js to
+// open its GitHub release page in the default browser; it never downloads
+// or applies anything itself.
+contextBridge.exposeInMainWorld("updateAPI", {
+  onUpdateAvailable: (callback) => {
+    ipcRenderer.on("update-available", (_event, info) => callback(info));
+  },
+  openReleasePage: (url) => ipcRenderer.send("open-update-page", url),
+});
