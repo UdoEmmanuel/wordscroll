@@ -275,6 +275,17 @@ button:not(:disabled):hover {
   gap: 12px;
 }
 
+/* [hidden] has the same specificity as .update-banner (one attribute, one
+   class selector) — without this override, .update-banner's own
+   `display: flex` above wins the cascade tie (it comes later in the
+   stylesheet than the browser's built-in `[hidden] { display: none }`
+   rule), silently defeating the hidden attribute regardless of what JS
+   does to it. Confirmed live: the update-check correctly decided NOT to
+   show the banner, yet it rendered anyway until this was added. */
+.update-banner[hidden] {
+  display: none;
+}
+
 .update-banner button {
   flex-shrink: 0;
 }
