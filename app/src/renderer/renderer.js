@@ -389,8 +389,37 @@ async function pollModelReady() {
 // history, favorites, and queue changes all broadcast over this same socket
 // regardless of whether audio capture is running (e.g. pure manual search),
 // so the UI needs to stay connected the whole time to catch them.
+// The "Now Displaying" iframe (src set once, statically, in index.html)
+// starts loading the instant the window opens — which races the Python
+// backend's own startup (several seconds, longer still while the Whisper
+// model loads onto the GPU). If that first navigation lands before the
+// backend is answering, Chromium shows ERR_CONNECTION_REFUSED inside the
+// iframe and, unlike this socket, nothing ever automatically retries that —
+// it just sits blank/failed until the operator manually reloads the app or
+// uses File > Reload Overlay Cache. This socket succeeding is a reliable
+// signal the backend is now definitely up, so the first time it does, force
+// the overlay iframe to (re)load — a cheap, harmless refresh if it already
+// loaded fine, but the only thing that recovers it if it hadn't.
+// The Theme modal's own preview iframe is subject to the exact same race —
+// it's present in the DOM (just CSS-hidden behind the modal's `hidden`
+// attribute) from the moment the page loads, so its src starts fetching
+// immediately too, same as the main one above.
+let overlayReloadedOnce = false;
+function reloadOverlayIfNeeded() {
+  if (overlayReloadedOnce) return;
+  overlayReloadedOnce = true;
+  const bust = (url) => url.split("?")[0] + `?t=${Date.now()}`;
+  nowDisplayingFrame.src = bust(nowDisplayingFrame.src);
+  const themePreview = document.getElementById("theme-preview");
+  if (themePreview) themePreview.src = bust(themePreview.src) + "&preview=1";
+}
+
 function connectWebSocket() {
   ws = new WebSocket(BACKEND_WS);
+
+  ws.onopen = () => {
+    reloadOverlayIfNeeded();
+  };
 
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);

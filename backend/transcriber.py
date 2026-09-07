@@ -11,6 +11,7 @@ real-world false-trigger rate on sermon audio needs tightening.
 """
 import logging
 import os
+import queue
 import sys
 import threading
 import time
@@ -46,6 +47,7 @@ except Exception:
     sys.modules["av"] = types.ModuleType("av")
 
 from faster_whisper import WhisperModel
+import ctranslate2
 
 from audio_capture import AudioCapture, SAMPLE_RATE
 from bible_books import BOOKS
@@ -65,22 +67,31 @@ INITIAL_PROMPT = (
     "begotten, whosoever, righteousness, salvation, repentance, covenant, gospel, disciples."
 )
 
+def _cuda_available() -> bool:
+    try:
+        return ctranslate2.get_cuda_device_count() > 0
+    except Exception:
+        return False
+
+
 # English-only variant — noticeably more accurate than the multilingual model
 # at the same speed, since sermon audio is English.
-# medium.en was tried for accuracy and reverted: benchmarked on this machine,
-# it took ~9-10s of CPU time to transcribe a 3s utterance — 3x realtime,
-# which would make live captioning and reference detection lag several
-# seconds behind speech. small.en transcribes in a fraction of real time
-# (see the benchmark note in the module docstring's history). If the actual
-# production PC has meaningfully more CPU headroom than this dev machine,
-# medium.en is worth re-testing there specifically — set WHISPER_MODEL_SIZE.
-MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE", "small.en")
-# Default to CPU rather than "auto": ctranslate2 will happily pick CUDA if it
-# *sees* an NVIDIA GPU even when the machine's CUDA/cuBLAS runtime isn't
-# properly installed, which crashes the worker thread on first transcribe.
-# Set WHISPER_DEVICE=cuda explicitly once GPU support is confirmed working.
-DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
-COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+# medium.en was tried on CPU and reverted: ~9-10s to transcribe a 3s
+# utterance there, 3x realtime, which would make live captioning and
+# reference detection lag several seconds behind speech. On a CUDA GPU it's a
+# completely different picture — benchmarked at 40-56x realtime on an RTX
+# 4050 — so the default follows whichever device this machine actually gets,
+# rather than a single fixed choice for every machine.
+_DEFAULT_DEVICE = "cuda" if _cuda_available() else "cpu"
+MODEL_SIZE = os.environ.get("WHISPER_MODEL_SIZE") or ("medium.en" if _DEFAULT_DEVICE == "cuda" else "small.en")
+# ctranslate2 will happily try to use CUDA if it *sees* an NVIDIA GPU even
+# when the machine's CUDA/cuDNN runtime isn't fully installed, which used to
+# mean crashing the worker thread on first transcribe with no way back —
+# _ensure_model() below now catches that and falls back to CPU/small.en
+# instead of taking the whole engine down. Set WHISPER_DEVICE explicitly to
+# override the auto-detected choice either way.
+DEVICE = os.environ.get("WHISPER_DEVICE") or _DEFAULT_DEVICE
+COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE") or ("float16" if DEVICE == "cuda" else "int8")
 BEAM_SIZE = int(os.environ.get("WHISPER_BEAM_SIZE", "5"))
 # ctranslate2's own default thread count under-uses available cores — pinning
 # this explicitly measured ~20-25% faster transcription on the dev machine
@@ -139,30 +150,59 @@ class TranscriptionEngine:
         self._on_segment = on_segment
         self._model: Optional[WhisperModel] = None
         self._thread: Optional[threading.Thread] = None
+        self._worker_thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._capture: Optional[AudioCapture] = None
+        # Finals are never dropped — order and completeness there is what
+        # reference detection depends on. Partials are UI-preview-only, so
+        # the queue holds at most the single freshest one: a partial that's
+        # still waiting when a newer one is ready is stale and worth nothing
+        # once it's transcribed, so it's replaced rather than queued behind.
+        self._final_queue: "queue.Queue[tuple[np.ndarray, float]]" = queue.Queue()
+        self._partial_queue: "queue.Queue[tuple[np.ndarray, float]]" = queue.Queue(maxsize=1)
+
+    def _load_model(self, model_size: str, device: str, compute_type: str) -> WhisperModel:
+        try:
+            # Once the model's already cached from a prior run, skip the
+            # network entirely — faster_whisper's default behavior tries
+            # to check Hugging Face for a newer revision on every single
+            # launch before falling back to the local cache, which is
+            # fine on a fast connection but adds a real delay (a slow
+            # DNS/connect timeout, not an instant failure) at every
+            # startup on a venue with no or flaky internet (NFR-2). This
+            # tries the fully-offline path first; only reaches the
+            # network-enabled fallback below on a genuine first run,
+            # when there's nothing cached yet to load offline. A genuine
+            # device/runtime failure (e.g. CUDA present but its cuDNN
+            # runtime broken) fails identically both ways, and is left to
+            # propagate to _ensure_model()'s own device-level fallback
+            # rather than being swallowed here.
+            return WhisperModel(
+                model_size, device=device, compute_type=compute_type, cpu_threads=CPU_THREADS,
+                local_files_only=True,
+            )
+        except Exception:
+            return WhisperModel(
+                model_size, device=device, compute_type=compute_type, cpu_threads=CPU_THREADS
+            )
 
     def _ensure_model(self) -> WhisperModel:
         if self._model is None:
             try:
-                # Once the model's already cached from a prior run, skip the
-                # network entirely — faster_whisper's default behavior tries
-                # to check Hugging Face for a newer revision on every single
-                # launch before falling back to the local cache, which is
-                # fine on a fast connection but adds a real delay (a slow
-                # DNS/connect timeout, not an instant failure) at every
-                # startup on a venue with no or flaky internet (NFR-2). This
-                # tries the fully-offline path first; only reaches the
-                # network-enabled fallback below on a genuine first run,
-                # when there's nothing cached yet to load offline.
-                self._model = WhisperModel(
-                    MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE, cpu_threads=CPU_THREADS,
-                    local_files_only=True,
-                )
-            except Exception:
-                self._model = WhisperModel(
-                    MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE, cpu_threads=CPU_THREADS
-                )
+                self._model = self._load_model(MODEL_SIZE, DEVICE, COMPUTE_TYPE)
+            except Exception as exc:
+                if DEVICE == "cuda":
+                    # The GPU was detected (ctranslate2.get_cuda_device_count()
+                    # > 0) but loading on it still failed — a missing/broken
+                    # CUDA or cuDNN runtime, not actually no GPU. Falling back
+                    # to the known-good CPU config keeps the app usable
+                    # instead of leaving it permanently stuck with no model.
+                    logging.getLogger("bible-transcriber").warning(
+                        "Failed to load Whisper on CUDA (%s) — falling back to CPU/small.en", exc
+                    )
+                    self._model = self._load_model("small.en", "cpu", "int8")
+                else:
+                    raise
         return self._model
 
     @property
@@ -180,15 +220,30 @@ class TranscriptionEngine:
         self._ensure_model()  # load eagerly so first utterance isn't slow
         self._capture = capture
         self._stop_event.clear()
+        # Two threads: _run() only does cheap, real-time chunk bookkeeping
+        # (silence detection, utterance boundaries) and must never block on
+        # Whisper — see _transcribe_worker()'s docstring for why that
+        # blocking was silently losing entire utterances. The actual model
+        # calls happen on this second thread instead, however far behind
+        # they fall.
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
+        self._worker_thread = threading.Thread(target=self._transcribe_worker, daemon=True)
+        self._worker_thread.start()
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread is not None:
             self._thread.join(timeout=5)
+        if self._worker_thread is not None:
+            self._worker_thread.join(timeout=5)
         self._thread = None
+        self._worker_thread = None
         self._capture = None
+        with self._final_queue.mutex:
+            self._final_queue.queue.clear()
+        with self._partial_queue.mutex:
+            self._partial_queue.queue.clear()
 
     def _transcribe(self, samples: np.ndarray) -> str:
         model = self._ensure_model()
@@ -213,9 +268,20 @@ class TranscriptionEngine:
         return text
 
     def _run(self) -> None:
+        """Real-time chunk bookkeeping only — must keep ticking on schedule
+        no matter how far behind Whisper falls. This thread's only job is
+        deciding utterance boundaries and handing finished audio off to
+        _transcribe_worker() via the queues; it must never itself call
+        _transcribe(). It used to, inline, and that was silently losing
+        entire utterances: this loop only drains the audio ring buffer
+        (RollingAudioBuffer, capacity BUFFER_SECONDS=30s) once per tick, so
+        any tick delayed longer than that by a slow blocking transcribe()
+        call meant read_since() came back having already lost whatever the
+        ring buffer overwrote in the meantime — a pastor's scripture
+        citation included, with no error, warning, or trace of it having
+        been said at all."""
         assert self._capture is not None
         buf = self._capture.buffer
-        log = logging.getLogger("bible-transcriber")
 
         read_pos = buf.total_written
         utterance_chunks: list[np.ndarray] = []
@@ -254,42 +320,66 @@ class TranscriptionEngine:
                 or utterance_len_seconds >= MAX_UTTERANCE_SECONDS
             )
 
-            try:
-                if should_commit:
-                    audio = np.concatenate(utterance_chunks)
-                    text = self._transcribe(audio)
-                    if text:
-                        self._on_segment(
-                            TranscriptSegment(
-                                text=text,
-                                is_final=True,
-                                started_at=utterance_started_at or time.time(),
-                                updated_at=time.time(),
-                            )
-                        )
-                elif has_utterance:
-                    seconds_since_partial += chunk_seconds
-                    if seconds_since_partial >= PARTIAL_REFRESH_SECONDS:
-                        audio = _tail_audio(utterance_chunks, PARTIAL_WINDOW_SECONDS)
-                        text = self._transcribe(audio)
-                        if text:
-                            self._on_segment(
-                                TranscriptSegment(
-                                    text=text,
-                                    is_final=False,
-                                    started_at=utterance_started_at or time.time(),
-                                    updated_at=time.time(),
-                                )
-                            )
-                        seconds_since_partial = 0.0
-            except Exception:
-                # A single bad chunk shouldn't take down the whole live loop —
-                # log it and keep listening rather than silently going deaf.
-                log.exception("Transcription of current utterance failed — discarding it")
-                should_commit = True  # fall through to the reset below
+            if should_commit:
+                audio = np.concatenate(utterance_chunks)
+                self._final_queue.put((audio, utterance_started_at or time.time()))
+            elif has_utterance:
+                seconds_since_partial += chunk_seconds
+                if seconds_since_partial >= PARTIAL_REFRESH_SECONDS:
+                    audio = _tail_audio(utterance_chunks, PARTIAL_WINDOW_SECONDS)
+                    # Latest-wins: clear out a still-pending stale partial
+                    # (the worker hasn't gotten to it yet, likely because
+                    # it's busy on a slow final) rather than let partials
+                    # queue up behind each other — a delayed live-preview
+                    # line has no value once a fresher one exists.
+                    try:
+                        self._partial_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        self._partial_queue.put_nowait((audio, utterance_started_at or time.time()))
+                    except queue.Full:
+                        pass
+                    seconds_since_partial = 0.0
 
             if should_commit:
                 utterance_chunks = []
                 utterance_started_at = None
                 silence_seconds = 0.0
                 seconds_since_partial = 0.0
+
+    def _transcribe_worker(self) -> None:
+        """Runs the actual (slow, possibly minutes-behind) Whisper calls,
+        off the real-time tick thread. Finals are drained first and never
+        dropped — completeness there is what reference detection depends
+        on; a partial is only picked up when no final is waiting, since a
+        final always supersedes it anyway."""
+        log = logging.getLogger("bible-transcriber")
+        while not self._stop_event.is_set():
+            try:
+                audio, started_at = self._final_queue.get(timeout=0.2)
+                is_final = True
+            except queue.Empty:
+                try:
+                    audio, started_at = self._partial_queue.get_nowait()
+                    is_final = False
+                except queue.Empty:
+                    continue
+
+            try:
+                text = self._transcribe(audio)
+            except Exception:
+                # A single bad chunk shouldn't take down the whole live loop —
+                # log it and keep listening rather than silently going deaf.
+                log.exception("Transcription of current utterance failed — discarding it")
+                continue
+
+            if text:
+                self._on_segment(
+                    TranscriptSegment(
+                        text=text,
+                        is_final=is_final,
+                        started_at=started_at,
+                        updated_at=time.time(),
+                    )
+                )
