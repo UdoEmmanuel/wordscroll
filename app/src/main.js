@@ -22,6 +22,10 @@ const GITHUB_REPO = "UdoEmmanuel/wordscroll";
 
 let mainWindow = null;
 let backendProcess = null;
+let isQuitting = false;
+let backendCrashCount = 0;
+let backendStartedAt = 0;
+let backendRestartTimer = null;
 
 // The Desktop shortcut launches electron.exe directly (see install.ps1) —
 // deliberately no PowerShell/console wrapper in between, since a flashing
@@ -83,6 +87,7 @@ async function startBackend() {
     return;
   }
 
+  backendStartedAt = Date.now();
   backendProcess = spawn(
     pythonExe,
     ["-m", "uvicorn", "main:app", "--host", BACKEND_HOST, "--port", String(BACKEND_PORT)],
@@ -93,17 +98,55 @@ async function startBackend() {
   backendProcess.on("exit", (code, signal) => {
     console.log(`[backend] process exited (code=${code}, signal=${signal})`);
     backendProcess = null;
+    if (isQuitting) return;
+    // A code like 3221226356 (0xC0000409, STATUS_STACK_BUFFER_OVERRUN) is a
+    // native crash inside PortAudio itself — not a Python exception, so
+    // nothing in the Python process could have caught or recovered from it.
+    // Before this, an unexpected exit here just left the renderer stuck on
+    // "Could not reach backend" until someone noticed and restarted the
+    // whole app mid-service. The renderer already retries its own device
+    // list / model-ready / WebSocket connections on a short interval (see
+    // startBackend()'s comment above), so it self-heals the moment a new
+    // backend process answers on the port again — this just needs to make
+    // sure one comes back.
+    scheduleBackendRestart();
   });
   backendProcess.on("error", (err) => {
     console.error("[backend] failed to start:", err);
     backendProcess = null;
+    if (!isQuitting) scheduleBackendRestart();
   });
+}
+
+// Backs off on a tight crash loop (a permanently broken device, a missing
+// dependency) instead of hammering the same failure every few milliseconds,
+// but still keeps trying indefinitely rather than giving up — this app runs
+// unattended during a live service, so "eventually recovers on its own" beats
+// "stops after N tries and waits for a human". The counter resets once a
+// backend has stayed up a reasonable while, so one crash after hours of fine
+// operation is treated as a fresh first attempt, not the tail of a loop.
+function scheduleBackendRestart() {
+  if (backendRestartTimer) return;
+  if (Date.now() - backendStartedAt > 30_000) {
+    backendCrashCount = 0;
+  }
+  backendCrashCount += 1;
+  const delayMs = Math.min(1000 * 2 ** Math.min(backendCrashCount - 1, 4), 15_000);
+  console.log(`[backend] restarting in ${delayMs}ms (attempt ${backendCrashCount})`);
+  backendRestartTimer = setTimeout(() => {
+    backendRestartTimer = null;
+    if (!isQuitting) startBackend();
+  }, delayMs);
 }
 
 // Only kills a backend THIS launch started — one already running before the
 // app opened (isBackendUp() found it) is left alone, since it isn't ours to
 // stop and something else may depend on it (e.g. it was started manually).
 function stopBackend() {
+  if (backendRestartTimer) {
+    clearTimeout(backendRestartTimer);
+    backendRestartTimer = null;
+  }
   if (backendProcess) {
     backendProcess.kill();
     backendProcess = null;
@@ -403,5 +446,6 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
+  isQuitting = true;
   stopBackend();
 });

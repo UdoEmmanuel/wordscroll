@@ -203,12 +203,31 @@ def _ref_key(r) -> str:
     return f"{r.book}|{r.chapter}|{r.verse_start}|{r.verse_end}"
 
 
-_last_broadcast_ref_key: Optional[str] = None
+# Recently-broadcast reference keys, each stamped with when it was broadcast.
+# A single scalar here used to mean only the *one* most-recent reference was
+# ever remembered — the moment a second, distinct reference was cited it
+# evicted the first from "already shown", so a rattled-off list of citations
+# ("John 3:16... Romans 8:28... Psalm 23:1...") only ever got the last one
+# auto-pushed to the display, with the rest silently dropped. Tracking every
+# key seen within the window fixes that without reintroducing duplicate
+# re-broadcasts of the same reference while it's still inside the rolling
+# detection window.
+_DEDUP_WINDOW_SECONDS = _RECENT_FINAL_WINDOW_SECONDS
+_recent_broadcast_keys: dict[str, float] = {}
+
+
+def _prune_and_mark_fresh(keys: list[str], now: float) -> list[str]:
+    for k in list(_recent_broadcast_keys):
+        if now - _recent_broadcast_keys[k] > _DEDUP_WINDOW_SECONDS:
+            del _recent_broadcast_keys[k]
+    fresh = [k for k in keys if k not in _recent_broadcast_keys]
+    for k in fresh:
+        _recent_broadcast_keys[k] = now
+    return fresh
 
 
 def _on_segment(segment: TranscriptSegment) -> None:
     """Called from the transcription worker thread — hop back to the event loop."""
-    global _last_broadcast_ref_key
     if _loop is None:
         return
     segment_type = "final" if segment.is_final else "partial"
@@ -237,9 +256,9 @@ def _on_segment(segment: TranscriptSegment) -> None:
     # below. Either way, without this the same reference would re-broadcast
     # (and re-render as a new card, or re-auto-push) repeatedly for as long
     # as it stays inside whichever window is currently in play.
-    fresh_refs = [r for r in refs if _ref_key(r) != _last_broadcast_ref_key]
-    if fresh_refs:
-        _last_broadcast_ref_key = _ref_key(fresh_refs[-1])
+    now = time.time()
+    fresh_keys = _prune_and_mark_fresh([_ref_key(r) for r in refs], now)
+    fresh_refs = [r for r in refs if _ref_key(r) in fresh_keys]
 
     if fresh_refs:
         ref_payload = {
@@ -278,9 +297,14 @@ def _on_segment(segment: TranscriptSegment) -> None:
     # refs still only ever reach the pending panel (FR-5.2) — that gating
     # already happens above, since `refs`/`fresh_refs` includes them but
     # this filters to "high" only.
+    # Push every fresh high-confidence reference, not just the last one — a
+    # pastor rattling off several citations in one breath (or one 8s window)
+    # used to have all but the final reference silently dropped here, even
+    # though they were correctly detected and broadcast to the pending panel
+    # above. Each still lands in history/output in order; the last one ends
+    # up on screen, same as before, but none of them are lost along the way.
     high_confidence = [r for r in fresh_refs if r.confidence == "high"]
-    if high_confidence:
-        r = high_confidence[-1]
+    for r in high_confidence:
         asyncio.run_coroutine_threadsafe(
             _apply_display(r.book, r.chapter, r.verse_start, r.verse_end), _loop
         )
@@ -315,8 +339,7 @@ def _on_segment(segment: TranscriptSegment) -> None:
             match = match_recitation(segment.text)
             if match is not None:
                 key = f"{match['book']}|{match['chapter']}|{match['verse']}|None"
-                if key != _last_broadcast_ref_key:
-                    _last_broadcast_ref_key = key
+                if _prune_and_mark_fresh([key], now):
                     ref_payload = {
                         "type": "reference",
                         "segmentType": segment_type,
@@ -435,12 +458,63 @@ async def _broadcast(payload: dict) -> None:
         _clients.discard(ws)
 
 
+_CAPTURE_RESTART_COOLDOWN_SECONDS = 2.0
+_capture_watchdog_last_attempt = 0.0
+
+
 async def _level_broadcaster() -> None:
-    """Streams the current mic input level ~15x/sec so the UI can render a live VU meter."""
+    """Streams the current mic input level ~15x/sec so the UI can render a
+    live VU meter, and doubles as a watchdog: PortAudio can silently abort
+    the underlying stream on a device hiccup (driver error, momentary
+    disconnect, Windows switching the default device) without raising
+    anywhere in this process — nothing about that shows up unless something
+    is actively polling `is_running`. This loop already runs continuously
+    while capturing, so it's what notices the mic went dead and reopens it,
+    rather than requiring the operator to notice mid-service and manually
+    stop/start."""
+    global _capture_watchdog_last_attempt
     while True:
         await asyncio.sleep(1 / 15)
-        if _capture is not None and _capture.is_running and _clients:
-            await _broadcast({"type": "level", "level": _capture.level})
+        capture = _capture  # snapshot — /stop or a fresh /start can swap this out from under us
+        if capture is None:
+            continue
+        if capture.is_running:
+            if _clients:
+                await _broadcast({"type": "level", "level": capture.level})
+            continue
+
+        now = time.time()
+        if now - _capture_watchdog_last_attempt < _CAPTURE_RESTART_COOLDOWN_SECONDS:
+            continue
+        _capture_watchdog_last_attempt = now
+        logger.warning(
+            "Audio capture stream died unexpectedly on device %s — attempting to reopen it",
+            capture.device_index,
+        )
+        # A stream PortAudio just aborted on its own can leave the host API
+        # (WASAPI in particular) mid-teardown for a moment — reopening the
+        # same device index instantly, in the same PortAudio session that
+        # just saw it die, is asking for whatever native state caused the
+        # death in the first place. A short settle delay plus a full
+        # Pa_Terminate/Pa_Init cycle (same mechanism as refresh_device_list,
+        # safe here since is_running just confirmed nothing is open) gives
+        # the driver a clean slate before we try again, rather than
+        # hammering the same wedged session.
+        await asyncio.sleep(1.0)
+        if _capture is not capture:
+            # The operator (or a fresh /start) already moved on while we
+            # were waiting — reopening this stale object would either
+            # silently fight whatever's now current or, if /stop already
+            # ran, blow up on a capture object nothing else references any
+            # more. Leave it alone either way.
+            continue
+        try:
+            refresh_device_list()
+            capture.start()
+            logger.info("Audio capture reopened after unexpected stop")
+            await _broadcast({"type": "capture_recovered", "device_index": capture.device_index})
+        except Exception as exc:
+            logger.warning("Failed to reopen audio capture: %s", exc)
 
 
 @app.on_event("startup")
@@ -492,13 +566,13 @@ def get_status():
 
 @app.post("/start")
 def start(req: StartRequest):
-    global _capture, _last_broadcast_ref_key
+    global _capture
     if _capture is not None and _capture.is_running:
         _capture.stop()
         _engine.stop()
 
     _recent_finals.clear()
-    _last_broadcast_ref_key = None
+    _recent_broadcast_keys.clear()
 
     candidate = AudioCapture(device_index=req.device_index, buffer=_buffer)
     try:
